@@ -1,4 +1,4 @@
-// Microbit Studio universal firmware v3 (on-demand USB + Bluetooth) — paste into MakeCode JavaScript.
+// Microbit Studio universal firmware v4 (on-demand USB + Bluetooth) — paste into MakeCode JavaScript.
 // Add the official Bluetooth extension first. Target: micro:bit V2.
 // Protocol: newline-delimited commands and name:value responses.
 bluetooth.startUartService()
@@ -18,11 +18,25 @@ let eventB = false
 let eventShake = false
 let shakeRegistered = false
 let lastControl = 0
+let countA = 0
+let countB = 0
+let countShake = 0
+let outgoing: string[] = []
 function emit(key: string, value: string) {
     let message = key + ":" + value + "\n"
-    if (usbActive) serial.writeString(message)
-    if (connected) bluetooth.uartWriteString(message)
+    if (outgoing.length < 64) outgoing.push(message)
 }
+function emitCount(key: string, n: number) {
+    emit(key, "" + n + "," + (n % 97))
+}
+basic.forever(function () {
+    if (outgoing.length > 0) {
+        let message = outgoing.shift()
+        if (usbActive) serial.writeString(message)
+        if (connected) bluetooth.uartWriteString(message)
+    }
+    basic.pause(1)
+})
 function validPin(p: number): boolean {
     return p == 0 || p == 1 || p == 2 || p == 8 || p == 12 || p == 13 || p == 14 || p == 15 || p == 16
 }
@@ -69,7 +83,7 @@ function stopAll() {
 }
 bluetooth.onBluetoothConnected(function () {
     connected = true
-    emit("firmware", "studio-v3")
+    emit("firmware", "studio-v4")
     matrix()
 })
 bluetooth.onBluetoothDisconnected(function () {
@@ -77,10 +91,16 @@ bluetooth.onBluetoothDisconnected(function () {
     stopAll()
 })
 input.onButtonPressed(Button.A, function () {
-    if (eventA) emit("buttonA", "1")
+    if (eventA) {
+        countA += 1
+        emitCount("ea", countA)
+    }
 })
 input.onButtonPressed(Button.B, function () {
-    if (eventB) emit("buttonB", "1")
+    if (eventB) {
+        countB += 1
+        emitCount("eb", countB)
+    }
 })
 
 function readSensor(key: string) {
@@ -99,13 +119,19 @@ function handleCommand(line: string) {
     lastControl = input.runningTime()
     line = line.trim()
     if (line == "KEEP") return
+    if (line == "COUNTS") {
+        if (eventA) emitCount("ea", countA)
+        if (eventB) emitCount("eb", countB)
+        if (eventShake) emitCount("es", countShake)
+        return
+    }
     if (line == "PING") {
         emit("studio", "PONG")
         return
     }
     if (line == "HELLO") {
         stopAll()
-        emit("firmware", "studio-v3")
+        emit("firmware", "studio-v4")
         return
     }
     if (line == "STOP_ALL") {
@@ -129,14 +155,23 @@ function handleCommand(line: string) {
     if (op == "READ") {
         readSensor(a[1])
     } else if (op == "EVENT") {
-        if (a[1] == "buttonA") eventA = v == 1
-        else if (a[1] == "buttonB") eventB = v == 1
+        if (a[1] == "buttonA") {
+            if (!eventA && v == 1) countA = 0
+            eventA = v == 1
+        } else if (a[1] == "buttonB") {
+            if (!eventB && v == 1) countB = 0
+            eventB = v == 1
+        }
         else if (a[1] == "shake") {
+            if (!eventShake && v == 1) countShake = 0
             eventShake = v == 1
             if (eventShake && !shakeRegistered) {
                 shakeRegistered = true
                 input.onGesture(Gesture.Shake, function () {
-                    if (eventShake) emit("shake", "1")
+                    if (eventShake) {
+                        countShake += 1
+                        emitCount("es", countShake)
+                    }
                 })
             }
         }
@@ -154,7 +189,7 @@ function handleCommand(line: string) {
         led.unplot(p, v)
         matrix()
     } else if (op == "RATE") {
-        // Retained for older clients; v3 does not stream periodically.
+        // Retained for older clients; v4 does not stream periodically.
     } else if (op == "DREAD" && validPin(p)) {
         emit("digital" + p, "" + pins.digitalReadPin(digitalPin(p)))
     } else if (op == "DWRITE" && validPin(p) && (v == 0 || v == 1)) {
