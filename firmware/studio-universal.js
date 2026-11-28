@@ -1,7 +1,10 @@
-// Microbit Studio universal firmware v1 — paste into MakeCode JavaScript.
+// Microbit Studio universal firmware v2 (USB + Bluetooth) — paste into MakeCode JavaScript.
 // Add the official Bluetooth extension first. Target: micro:bit V2.
 // Protocol: newline-delimited commands and name:value responses.
 bluetooth.startUartService()
+serial.redirectToUSB()
+serial.setBaudRate(BaudRate.BaudRate115200)
+let usbActive = false
 let connected = false
 let watched = -1
 let previous = -1
@@ -13,7 +16,9 @@ let prevB = 1
 let lastSample = 0
 let sampleInterval = 200
 function emit(key: string, value: string) {
-    if (connected) bluetooth.uartWriteString(key + ":" + value + "\n")
+    let message = key + ":" + value + "\n"
+    if (usbActive) serial.writeString(message)
+    if (connected) bluetooth.uartWriteString(message)
 }
 function validPin(p: number): boolean {
     return p == 0 || p == 1 || p == 2 || p == 8 || p == 12 || p == 13 || p == 14 || p == 15 || p == 16
@@ -58,7 +63,7 @@ function stopAll() {
 }
 bluetooth.onBluetoothConnected(function () {
     connected = true
-    emit("firmware", "studio-v1")
+    emit("firmware", "studio-v2")
     matrix()
 })
 bluetooth.onBluetoothDisconnected(function () {
@@ -74,14 +79,14 @@ input.onButtonPressed(Button.B, function () {
 input.onGesture(Gesture.Shake, function () {
     emit("shake", "1")
 })
-bluetooth.onUartDataReceived("\n", function () {
-    let line = bluetooth.uartReadUntil("\n").trim()
+function handleCommand(line: string) {
+    line = line.trim()
     if (line == "PING") {
         emit("studio", "PONG")
         return
     }
     if (line == "HELLO") {
-        emit("firmware", "studio-v1")
+        emit("firmware", "studio-v2")
         return
     }
     if (line == "STOP_ALL") {
@@ -150,9 +155,16 @@ bluetooth.onUartDataReceived("\n", function () {
     } else {
         emit("error", "invalid command")
     }
+}
+bluetooth.onUartDataReceived("\n", function () {
+    handleCommand(bluetooth.uartReadUntil("\n"))
+})
+serial.onDataReceived("\n", function () {
+    usbActive = true
+    handleCommand(serial.readUntil("\n"))
 })
 basic.forever(function () {
-    if (connected && input.runningTime() - lastSample >= sampleInterval) {
+    if ((connected || usbActive) && input.runningTime() - lastSample >= sampleInterval) {
         lastSample = input.runningTime()
         emit("ax", "" + input.acceleration(Dimension.X))
         emit("ay", "" + input.acceleration(Dimension.Y))
@@ -167,14 +179,14 @@ basic.forever(function () {
     basic.pause(20)
 })
 basic.forever(function () {
-    if (connected && watched >= 0) {
+    if ((connected || usbActive) && watched >= 0) {
         let current = pins.digitalReadPin(digitalPin(watched))
         if (current != previous) {
             previous = current
             emit("digital" + watched, "" + current)
         }
     }
-    if (connected && gateA >= 0 && gateB >= 0) {
+    if ((connected || usbActive) && gateA >= 0 && gateB >= 0) {
         let a = pins.digitalReadPin(digitalPin(gateA))
         let b = pins.digitalReadPin(digitalPin(gateB))
         let now = input.runningTime()
