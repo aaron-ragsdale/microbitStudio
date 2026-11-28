@@ -20,3 +20,9 @@ Send newline-delimited name:value pairs or JSON objects. Incoming commands are n
 
 ## Initial prototype
 Dashboard widgets, variable discovery, serial monitor, CSV recording, local widget persistence and demo. Hardware testing and extension compilation still required. Multiple devices, layout editing and additional widgets are planned.
+
+
+## Universal firmware (micro:bit V2)
+1. [Download the compiled Studio HEX](https://aaron-ragsdale.github.io/microbitStudio/firmware/microbit_Studio.hex) (requires the compiled file in `firmware/microbit_Studio.hex`).
+2. Connect by USB and open the [official online HEX programmer](https://microbit.org/tools/webusb-hex-download-tool/).
+3. Select the downloaded HEX and flash the board. Return to Studio and choose + Bluetooth.
