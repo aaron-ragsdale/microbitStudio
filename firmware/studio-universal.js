@@ -21,6 +21,26 @@ function validPin(p: number): boolean {
 function analogPin(p: number): boolean {
     return p == 0 || p == 1 || p == 2
 }
+function digitalPin(p: number): DigitalPin {
+    switch (p) {
+        case 0: return DigitalPin.P0
+        case 1: return DigitalPin.P1
+        case 2: return DigitalPin.P2
+        case 8: return DigitalPin.P8
+        case 12: return DigitalPin.P12
+        case 13: return DigitalPin.P13
+        case 14: return DigitalPin.P14
+        case 15: return DigitalPin.P15
+        default: return DigitalPin.P16
+    }
+}
+function analogPort(p: number): AnalogPin {
+    switch (p) {
+        case 0: return AnalogPin.P0
+        case 1: return AnalogPin.P1
+        default: return AnalogPin.P2
+    }
+}
 function matrix() {
     let s = ""
     for (let y = 0; y < 5; y++) {
@@ -97,35 +117,35 @@ bluetooth.onUartDataReceived("\n", function () {
     } else if (op == "RATE" && p >= 100 && p <= 5000) {
         sampleInterval = p
     } else if (op == "DREAD" && validPin(p)) {
-        emit("digital" + p, "" + pins.digitalReadPin(p))
+        emit("digital" + p, "" + pins.digitalReadPin(digitalPin(p)))
     } else if (op == "DWRITE" && validPin(p) && (v == 0 || v == 1)) {
-        pins.digitalWritePin(p, v)
+        pins.digitalWritePin(digitalPin(p), v)
     } else if (op == "AREAD" && analogPin(p)) {
-        emit("analog" + p, "" + pins.analogReadPin(p))
-    } else if (op == "PWM" && validPin(p) && v >= 0 && v <= 1023) {
-        pins.analogWritePin(p, v)
-    } else if (op == "SERVO" && validPin(p) && v >= 0 && v <= 180) {
-        pins.servoWritePin(p, v)
+        emit("analog" + p, "" + pins.analogReadPin(analogPort(p)))
+    } else if (op == "PWM" && analogPin(p) && v >= 0 && v <= 1023) {
+        pins.analogWritePin(analogPort(p), v)
+    } else if (op == "SERVO" && analogPin(p) && v >= 0 && v <= 180) {
+        pins.servoWritePin(analogPort(p), v)
     } else if (op == "PULL" && validPin(p)) {
-        if (v == 1) pins.setPull(p, PinPullMode.PullUp)
-        else if (v == 2) pins.setPull(p, PinPullMode.PullDown)
-        else pins.setPull(p, PinPullMode.PullNone)
+        if (v == 1) pins.setPull(digitalPin(p), PinPullMode.PullUp)
+        else if (v == 2) pins.setPull(digitalPin(p), PinPullMode.PullDown)
+        else pins.setPull(digitalPin(p), PinPullMode.PullNone)
     } else if (op == "WATCH" && validPin(p)) {
         watched = p
-        previous = pins.digitalReadPin(p)
+        previous = pins.digitalReadPin(digitalPin(p))
     } else if (op == "ULTRA" && validPin(p) && validPin(v) && p != v) {
-        pins.digitalWritePin(p, 0)
+        pins.digitalWritePin(digitalPin(p), 0)
         control.waitMicros(2)
-        pins.digitalWritePin(p, 1)
+        pins.digitalWritePin(digitalPin(p), 1)
         control.waitMicros(10)
-        pins.digitalWritePin(p, 0)
-        let us = pins.pulseIn(v, PulseValue.High, 25000)
+        pins.digitalWritePin(digitalPin(p), 0)
+        let us = pins.pulseIn(digitalPin(v), PulseValue.High, 25000)
         emit("distance" + p + "_" + v, "" + (us == 0 ? -1 : us / 58))
     } else if (op == "GATE" && validPin(p) && validPin(v) && p != v) {
         gateA = p
         gateB = v
-        prevA = pins.digitalReadPin(p)
-        prevB = pins.digitalReadPin(v)
+        prevA = pins.digitalReadPin(digitalPin(p))
+        prevB = pins.digitalReadPin(digitalPin(v))
         gateStart = -1
     } else {
         emit("error", "invalid command")
@@ -148,15 +168,15 @@ basic.forever(function () {
 })
 basic.forever(function () {
     if (connected && watched >= 0) {
-        let current = pins.digitalReadPin(watched)
+        let current = pins.digitalReadPin(digitalPin(watched))
         if (current != previous) {
             previous = current
             emit("digital" + watched, "" + current)
         }
     }
     if (connected && gateA >= 0 && gateB >= 0) {
-        let a = pins.digitalReadPin(gateA)
-        let b = pins.digitalReadPin(gateB)
+        let a = pins.digitalReadPin(digitalPin(gateA))
+        let b = pins.digitalReadPin(digitalPin(gateB))
         let now = input.runningTime()
         if (prevA == 1 && a == 0) gateStart = now
         if (prevB == 1 && b == 0 && gateStart >= 0) {
