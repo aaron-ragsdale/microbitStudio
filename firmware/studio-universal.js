@@ -1,4 +1,4 @@
-// Microbit Studio universal firmware v4 (on-demand USB + Bluetooth) — paste into MakeCode JavaScript.
+// Microbit Studio universal firmware v5 (on-demand USB + Bluetooth) — paste into MakeCode JavaScript.
 // Add the official Bluetooth extension first. Target: micro:bit V2.
 // Protocol: newline-delimited commands and name:value responses.
 bluetooth.startUartService()
@@ -37,6 +37,139 @@ basic.forever(function () {
     }
     basic.pause(1)
 })
+
+// VM: bounded straight-line numeric instructions, handlers 0=start, 1=A, 2=B, 3..6=virtual.
+let vmCode: string[] = []
+let vmVars: number[] = []
+let vmDirty: number[] = []
+let vmRunning = false
+let vmExpected = 0
+let vmLoaded = 0
+let vmUpload = false
+let vmError = false
+let displayText = ""
+let displayOffset = 0
+let displayNext = 0
+let digits = ["111101101101111","010110010010111","111001111100111","111001111001111","101101111001001","111100111001111","111100111101111","111001001001001","111101111101111","111101111001111"]
+function fastNumber(n: number) {
+    displayText = "" + Math.round(n)
+    displayOffset = 0
+    displayNext = 0
+}
+function displayFrame() {
+    if (displayText.length == 0) return
+    let width = displayText.length * 4 - 1
+    for (let x = 0; x < 5; x++) {
+        let col = x + displayOffset - (width <= 5 ? Math.idiv(width - 5, 2) : 0)
+        for (let y = 0; y < 5; y++) {
+            let on = false
+            if (col >= 0 && col < width && col % 4 < 3) {
+                let ch = displayText.charAt(Math.idiv(col, 4))
+                if (ch == "-") on = y == 2
+                else on = digits[parseInt(ch)].charAt(y * 3 + col % 4) == "1"
+            }
+            if (on) led.plot(x,y)
+            else led.unplot(x,y)
+        }
+    }
+    if (width > 5) {
+        displayOffset += 1
+        if (displayOffset > width - 5) displayOffset = 0
+        displayNext = input.runningTime() + 180
+    } else displayNext = input.runningTime() + 100000000
+}
+function vmOperand(a: string): number {
+    if (a.charAt(0) == "v") return vmVars[parseInt(a.substr(1))]
+    return parseInt(a)
+}
+function vmValidOperand(a: string): boolean {
+    let n = parseInt(a.charAt(0) == "v" ? a.substr(1) : a)
+    if (a.charAt(0) == "v") return n >= 0 && n < vmVars.length && a == "v" + n
+    return n >= -999999 && n <= 999999 && a == "" + n
+}
+function vmExecute(h: number) {
+    if (!vmRunning) return
+    for (let i = 0; i < vmCode.length; i++) {
+        let a = vmCode[i].split(",")
+        if (parseInt(a[0]) == h) {
+            let slot = parseInt(a[2])
+            if (a[1] == "N") fastNumber(vmOperand(a[2]))
+            else if (a[1] == "C") {
+                displayText = ""
+                basic.clearScreen()
+            } else {
+                let n = vmOperand(a[3])
+                if (a[1] == "A") n += vmVars[slot]
+                vmVars[slot] = Math.max(-999999, Math.min(999999,n))
+                vmDirty[slot] = 1
+            }
+        }
+    }
+}
+function vmCommand(a: string[]) {
+    let op = a[0]
+    let p = parseInt(a[1])
+    if (op == "VB") {
+        vmRunning = false
+        vmCode = []
+        vmVars = []
+        vmDirty = []
+        vmLoaded = 0
+        vmExpected = parseInt(a[2])
+        vmError = !(p >= 0 && p <= 16 && vmExpected >= 0 && vmExpected <= 64)
+        vmUpload = !vmError
+        if (vmUpload) for (let i = 0; i < p; i++) {
+            vmVars.push(0)
+            vmDirty.push(1)
+        }
+        emit("vm", vmUpload ? "B" : "E")
+    } else if (op == "VI") {
+        let h = parseInt(a[2])
+        let k = a[3]
+        let slot = parseInt(a[4])
+        let valid = vmUpload && p == vmLoaded && vmLoaded < vmExpected && h >= 0 && h <= 6
+        if (k == "S" || k == "A") valid = valid && a.length == 6 && slot >= 0 && slot < vmVars.length && vmValidOperand(a[5])
+        else if (k == "N") valid = valid && a.length == 5 && vmValidOperand(a[4])
+        else if (k == "C") valid = valid && a.length == 4
+        else valid = false
+        if (valid) {
+            let row = a[2] + "," + k
+            if (a.length > 4) row += "," + a[4]
+            if (a.length > 5) row += "," + a[5]
+            vmCode.push(row)
+            vmLoaded += 1
+            emit("vm", "" + p)
+        } else {
+            vmError = true
+            emit("vm", "E")
+        }
+    } else if (op == "VR") {
+        if (vmUpload && !vmError && vmLoaded == vmExpected) {
+            vmUpload = false
+            vmRunning = true
+            vmExecute(0)
+            emit("vm", "R")
+        } else emit("vm", "E")
+    } else if (op == "VH" && p >= 3 && p <= 6) {
+        vmExecute(p)
+    } else if (op == "VQ") {
+        if (vmRunning) for (let i = 0; i < vmVars.length; i++) vmDirty[i] = 1
+    }
+}
+basic.forever(function () {
+    if (displayText.length > 0 && input.runningTime() >= displayNext) displayFrame()
+    if (vmRunning && outgoing.length < 8) {
+        for (let i = 0; i < vmVars.length; i++) {
+            if (vmDirty[i] == 1) {
+                vmDirty[i] = 0
+                emit("vv" + i, "" + vmVars[i])
+                break
+            }
+        }
+    }
+    basic.pause(5)
+})
+
 function validPin(p: number): boolean {
     return p == 0 || p == 1 || p == 2 || p == 8 || p == 12 || p == 13 || p == 14 || p == 15 || p == 16
 }
@@ -73,6 +206,9 @@ function matrix() {
     emit("led", s)
 }
 function stopAll() {
+    vmRunning = false
+    vmUpload = false
+    displayText = ""
     eventA = false
     eventB = false
     eventShake = false
@@ -83,7 +219,7 @@ function stopAll() {
 }
 bluetooth.onBluetoothConnected(function () {
     connected = true
-    emit("firmware", "studio-v4")
+    emit("firmware", "studio-v5")
     matrix()
 })
 bluetooth.onBluetoothDisconnected(function () {
@@ -91,12 +227,14 @@ bluetooth.onBluetoothDisconnected(function () {
     stopAll()
 })
 input.onButtonPressed(Button.A, function () {
+    if (vmRunning) vmExecute(1)
     if (eventA) {
         countA += 1
         emitCount("ea", countA)
     }
 })
 input.onButtonPressed(Button.B, function () {
+    if (vmRunning) vmExecute(2)
     if (eventB) {
         countB += 1
         emitCount("eb", countB)
@@ -131,7 +269,7 @@ function handleCommand(line: string) {
     }
     if (line == "HELLO") {
         stopAll()
-        emit("firmware", "studio-v4")
+        emit("firmware", "studio-v5")
         return
     }
     if (line == "STOP_ALL") {
@@ -139,6 +277,7 @@ function handleCommand(line: string) {
         return
     }
     if (line.substr(0, 4) == "LED:") {
+        displayText = ""
         let pattern = line.substr(4)
         if (pattern.length != 25) return
         for (let i = 0; i < 25; i++) {
@@ -152,7 +291,9 @@ function handleCommand(line: string) {
     let op = a[0]
     let p = parseInt(a[1])
     let v = parseInt(a[2])
-    if (op == "READ") {
+    if (op == "VB" || op == "VI" || op == "VR" || op == "VH" || op == "VQ") {
+        vmCommand(a)
+    } else if (op == "READ") {
         readSensor(a[1])
     } else if (op == "EVENT") {
         if (a[1] == "buttonA") {
@@ -177,15 +318,17 @@ function handleCommand(line: string) {
         }
         emit("event_" + a[1], "" + v)
     } else if (op == "CLEAR") {
+        displayText = ""
         basic.clearScreen()
         matrix()
     } else if (op == "NUMBER") {
-        basic.showNumber(p)
-        matrix()
+        if (p >= -999999 && p <= 999999) fastNumber(p)
     } else if (op == "PLOT" && p >= 0 && p < 5 && v >= 0 && v < 5) {
+        displayText = ""
         led.plot(p, v)
         matrix()
     } else if (op == "UNPLOT" && p >= 0 && p < 5 && v >= 0 && v < 5) {
+        displayText = ""
         led.unplot(p, v)
         matrix()
     } else if (op == "RATE") {
@@ -233,7 +376,7 @@ serial.onDataReceived("\n", function () {
     handleCommand(serial.readUntil("\n"))
 })
 basic.forever(function () {
-    if (input.runningTime() - lastControl > 10000) stopAll()
+    if (!vmRunning && input.runningTime() - lastControl > 10000) stopAll()
     if ((connected || usbActive) && watched >= 0) {
         let current = pins.digitalReadPin(digitalPin(watched))
         if (current != previous) {
