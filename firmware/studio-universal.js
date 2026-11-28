@@ -1,4 +1,4 @@
-// Microbit Studio universal firmware v2 (USB + Bluetooth) — paste into MakeCode JavaScript.
+// Microbit Studio universal firmware v3 (on-demand USB + Bluetooth) — paste into MakeCode JavaScript.
 // Add the official Bluetooth extension first. Target: micro:bit V2.
 // Protocol: newline-delimited commands and name:value responses.
 bluetooth.startUartService()
@@ -13,8 +13,11 @@ let gateB = -1
 let gateStart = -1
 let prevA = 1
 let prevB = 1
-let lastSample = 0
-let sampleInterval = 200
+let eventA = false
+let eventB = false
+let eventShake = false
+let shakeRegistered = false
+let lastControl = 0
 function emit(key: string, value: string) {
     let message = key + ":" + value + "\n"
     if (usbActive) serial.writeString(message)
@@ -56,6 +59,9 @@ function matrix() {
     emit("led", s)
 }
 function stopAll() {
+    eventA = false
+    eventB = false
+    eventShake = false
     watched = -1
     gateA = -1
     gateB = -1
@@ -63,7 +69,7 @@ function stopAll() {
 }
 bluetooth.onBluetoothConnected(function () {
     connected = true
-    emit("firmware", "studio-v2")
+    emit("firmware", "studio-v3")
     matrix()
 })
 bluetooth.onBluetoothDisconnected(function () {
@@ -71,22 +77,35 @@ bluetooth.onBluetoothDisconnected(function () {
     stopAll()
 })
 input.onButtonPressed(Button.A, function () {
-    emit("buttonA", "1")
+    if (eventA) emit("buttonA", "1")
 })
 input.onButtonPressed(Button.B, function () {
-    emit("buttonB", "1")
+    if (eventB) emit("buttonB", "1")
 })
-input.onGesture(Gesture.Shake, function () {
-    emit("shake", "1")
-})
+
+function readSensor(key: string) {
+    if (key == "ax") emit(key, "" + input.acceleration(Dimension.X))
+    else if (key == "ay") emit(key, "" + input.acceleration(Dimension.Y))
+    else if (key == "az") emit(key, "" + input.acceleration(Dimension.Z))
+    else if (key == "strength") emit(key, "" + input.acceleration(Dimension.Strength))
+    else if (key == "temperature") emit(key, "" + input.temperature())
+    else if (key == "light") emit(key, "" + input.lightLevel())
+    else if (key == "sound") emit(key, "" + input.soundLevel())
+    else if (key == "aPressed") emit(key, input.buttonIsPressed(Button.A) ? "1" : "0")
+    else if (key == "bPressed") emit(key, input.buttonIsPressed(Button.B) ? "1" : "0")
+    else emit("error", "unknown sensor")
+}
 function handleCommand(line: string) {
+    lastControl = input.runningTime()
     line = line.trim()
+    if (line == "KEEP") return
     if (line == "PING") {
         emit("studio", "PONG")
         return
     }
     if (line == "HELLO") {
-        emit("firmware", "studio-v2")
+        stopAll()
+        emit("firmware", "studio-v3")
         return
     }
     if (line == "STOP_ALL") {
@@ -107,7 +126,22 @@ function handleCommand(line: string) {
     let op = a[0]
     let p = parseInt(a[1])
     let v = parseInt(a[2])
-    if (op == "CLEAR") {
+    if (op == "READ") {
+        readSensor(a[1])
+    } else if (op == "EVENT") {
+        if (a[1] == "buttonA") eventA = v == 1
+        else if (a[1] == "buttonB") eventB = v == 1
+        else if (a[1] == "shake") {
+            eventShake = v == 1
+            if (eventShake && !shakeRegistered) {
+                shakeRegistered = true
+                input.onGesture(Gesture.Shake, function () {
+                    if (eventShake) emit("shake", "1")
+                })
+            }
+        }
+        emit("event_" + a[1], "" + v)
+    } else if (op == "CLEAR") {
         basic.clearScreen()
         matrix()
     } else if (op == "NUMBER") {
@@ -119,8 +153,8 @@ function handleCommand(line: string) {
     } else if (op == "UNPLOT" && p >= 0 && p < 5 && v >= 0 && v < 5) {
         led.unplot(p, v)
         matrix()
-    } else if (op == "RATE" && p >= 100 && p <= 5000) {
-        sampleInterval = p
+    } else if (op == "RATE") {
+        // Retained for older clients; v3 does not stream periodically.
     } else if (op == "DREAD" && validPin(p)) {
         emit("digital" + p, "" + pins.digitalReadPin(digitalPin(p)))
     } else if (op == "DWRITE" && validPin(p) && (v == 0 || v == 1)) {
@@ -164,21 +198,7 @@ serial.onDataReceived("\n", function () {
     handleCommand(serial.readUntil("\n"))
 })
 basic.forever(function () {
-    if ((connected || usbActive) && input.runningTime() - lastSample >= sampleInterval) {
-        lastSample = input.runningTime()
-        emit("ax", "" + input.acceleration(Dimension.X))
-        emit("ay", "" + input.acceleration(Dimension.Y))
-        emit("az", "" + input.acceleration(Dimension.Z))
-        emit("strength", "" + input.acceleration(Dimension.Strength))
-        emit("temperature", "" + input.temperature())
-        emit("light", "" + input.lightLevel())
-        emit("sound", "" + input.soundLevel())
-        emit("aPressed", input.buttonIsPressed(Button.A) ? "1" : "0")
-        emit("bPressed", input.buttonIsPressed(Button.B) ? "1" : "0")
-    }
-    basic.pause(20)
-})
-basic.forever(function () {
+    if (input.runningTime() - lastControl > 10000) stopAll()
     if ((connected || usbActive) && watched >= 0) {
         let current = pins.digitalReadPin(digitalPin(watched))
         if (current != previous) {
